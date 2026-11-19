@@ -33,3 +33,10 @@ __pycache__/
 # third-party code kept locally for reference (not ours to publish)
 velmaps/upstream/
 velmaps/bahamas/upstream_idl/
+
+# virtual environment (project folder is the venv)
+bin/
+lib/
+include/
+share/
+pyvenv.cfg

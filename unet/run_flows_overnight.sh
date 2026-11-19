@@ -2,7 +2,7 @@
 # Overnight: train flow A and flow B (120 epochs each, K=16, width 128), then evaluate on the test split.
 # Local (MPS) only - no cluster jobs. Logs: runs_flowA.log, runs_flowB.log, runs_flow_eval.log
 cd "$(dirname "$0")"
-P=/Library/Frameworks/Python.framework/Versions/3.11/bin/python3
+P=/Users/davidharvey/Work/cdm_to_sidm/bin/python
 date
 $P train_flow.py --model A --name flowA --epochs 120 --K 16 --hidden 128 > runs_flowA.log 2>&1
 echo "flowA exit $?"; date

@@ -4,7 +4,7 @@
 # 2) flow A on pairs_dm.npz (120 epochs, K=16, width 128), 19 draws; 3) comparison figures.
 # Logs: runs_dm_overnight.log (this script), runs_dm_<step>.log
 cd "$(dirname "$0")"
-P=/Library/Frameworks/Python.framework/Versions/3.11/bin/python3
+P=/Users/davidharvey/Work/cdm_to_sidm/bin/python
 date
 for m in "gauss" "displace" "displace --uscale 2" "displace --uscale 3"; do
   tag=$(echo $m | tr -d ' -' | sed 's/uscale/_u/')

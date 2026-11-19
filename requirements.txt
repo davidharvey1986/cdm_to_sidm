@@ -1,0 +1,12 @@
+# cdm_to_sidm: venv is the project folder itself (python3.11 -m venv . ; bin/pip install -r requirements.txt)
+numpy==1.26.1
+scipy==1.15.3
+matplotlib==3.10.5
+torch==2.10.0
+pandas==2.3.3
+scikit-learn==1.7.1
+h5py==3.14.0
+wandb==0.21.1
+# velocity-map pipeline (vel_maps.py, SWIFT snapshots)
+swiftsimio
+unyt
