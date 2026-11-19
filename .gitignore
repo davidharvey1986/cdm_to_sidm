@@ -1,0 +1,35 @@
+# data, catalogues and model outputs stay local (large / unpublished)
+unet/data/
+unet/runs/
+*.npz
+*.npy
+*.pkl
+*.pt
+*.pth
+*.h5
+*.hdf5
+*.fits
+*.csv
+images_rematch/
+remake_1kpc/
+remake_1kpc_fix20/
+remake_full20/
+bahamas/catalogs/
+**/test_output*/
+**/test_baryons/
+# figures (results) local for now
+figures/
+unet/figures/
+**/*.png
+**/*.pdf
+# logs, caches, tooling
+*.log
+*.out
+wandb/
+__pycache__/
+*.pyc
+.DS_Store
+.ipynb_checkpoints/
+# third-party code kept locally for reference (not ours to publish)
+velmaps/upstream/
+velmaps/bahamas/upstream_idl/

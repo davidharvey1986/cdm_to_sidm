@@ -1,0 +1,9 @@
+SIDM entries whose stamps are NOT centred on the CDM partner halo (17 Nov 2026).
+These cannot be fixed from the existing outputs; exclude them from CDM<->SIDM pairs.
+model     snap  halo           reason
+SIDM0.05  8     halo_00000010  run's output list is shifted: no snapshot at this redshift
+SIDM0.05  9     halo_00000010  run's output list is shifted: no snapshot at this redshift
+SIDM0.05  10    halo_00000010  run's output list is shifted: no snapshot at this redshift
+SIDM0.1   9     halo_00029066  run's output list is shifted: no snapshot at this redshift
+SIDM0.1   10    halo_00029066  run's output list is shifted: no snapshot at this redshift
+SIDM0.01  7     halo_00016613  no SIDM counterpart (best candidate shares 1 particle, 27 Mpc away)

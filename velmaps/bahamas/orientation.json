@@ -1,0 +1,4 @@
+{"note": "COSMA BAHAMAS velocity maps (los<k>.npz, image cols = first remaining box axis, rows = second, origin lower) -> stamp projection_P (bahamas.pkl / pairs.npz). Apply np.rot90(m, rot) then, if flip, m[:, ::-1]. Found by check_orientation.py on CDM+baryons z=0 fof 0-4: log-map correlation 0.98 for each.",
+ "projection_0": {"los": 2, "rot": 0, "flip": false},
+ "projection_1": {"los": 0, "rot": 0, "flip": false},
+ "projection_2": {"los": 1, "rot": 3, "flip": true}}
