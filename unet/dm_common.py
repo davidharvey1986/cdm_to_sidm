@@ -81,3 +81,21 @@ def peaks(m):
     hp = m - gaussian_filter(m, (0, 3, 3)); pk = (maximum_filter(hp, (1, 5, 5)) == hp) & (hp > 0.15) & (T2.R > 6)[None]
     pk[:, :6] = pk[:, -6:] = 0; pk[:, :, :6] = pk[:, :, -6:] = 0
     return pk.sum((1, 2)), (pk & (hp > 0.5)).sum((1, 2))
+
+
+MC_AP = T2.R < 45  # mass-conservation aperture: R < 900 kpc
+# true log10 M_SIDM/M_CDM within 900 kpc on the TRAIN split (mean, sd) per sigma: SIDM moves mass out of the core but keeps the total
+MC_TRAIN = {0.1: (-0.0008, 0.0098), 0.3: (-0.0002, 0.0096), 1.0: (0.0018, 0.0102)}
+
+
+def conserve(X, c, sigma=None, seed=0, ap=MC_AP):
+    """rescale each draw (a constant shift in log Sigma) so its mass inside ap equals the CDM map's mass times a ratio drawn
+    from the train-split SIDM/CDM distribution MC_TRAIN[sigma] (sigma=None: exactly the CDM mass).
+    X (..., n, 96, 96), c (n, 96, 96) log10 Sigma; sigma (n,). The flow does not conserve mass per map (draw scatter 0.016 dex
+    vs true 0.010); forcing exactly the CDM mass removes the true scatter and makes the pixel calibration under-dispersed."""
+    mX = np.log10((10 ** X[..., ap].astype(np.float64)).sum(-1)); mc = np.log10((10 ** c[:, ap].astype(np.float64)).sum(-1))
+    tgt = mc
+    if sigma is not None:
+        mu = np.array([MC_TRAIN[round(float(q), 3)][0] for q in sigma]); sd = np.array([MC_TRAIN[round(float(q), 3)][1] for q in sigma])
+        tgt = mc + mu + sd * np.random.default_rng(seed).standard_normal(mX.shape)
+    return (X + (tgt - mX)[..., None, None]).astype(X.dtype)

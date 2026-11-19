@@ -12,7 +12,10 @@ Maps are cropped to the central 96x96 px; only pairs whose re-centring shift is 
            (CDM, SIDM_sigma) with NLL of both maps + LAMBDA * mean (eps_CDM - eps_SIDM)^2,
            which ties a cluster's CDM and SIDM maps to the same latent.
            Transform: eps = f(CDM; 0, z) -> SIDM map = f^-1(eps; sigma, z).
-usage: python3 train_flow.py --model A --name flowA [--epochs 40] [--holdout 0.3] [--data darkskies_pairs.npz]
+Extra conditioning (model A): if the data file has cx (Nx, c1, 100, 100; per CDM map) and/or cy (P, c2, 100, 100; per pair),
+they are appended to the CDM map as conditioning channels (each standardised on the train split), e.g. data/pairs_stars.npz:
+x, y = CDM, SIDM stars; cx = CDM DM; cy = SIDM DM - CDM DM. A per-pair ok mask is used if present.
+usage: python3 train_flow.py --model A --name flowA [--epochs 40] [--holdout 0.3] [--data darkskies_pairs.npz] [--dscale 0.1]
 """
 import os, json, time, argparse, csv
 import numpy as np
@@ -31,6 +34,7 @@ ap.add_argument("--K", type=int, default=8)
 ap.add_argument("--hidden", type=int, default=96)
 ap.add_argument("--lam", type=float, default=1.0, help="model B latent-alignment weight")
 ap.add_argument("--noise", type=float, default=0.003, help="dequantisation noise, dex")
+ap.add_argument("--dscale", type=float, default=0.1, help="asinh scale of delta, dex")
 ap.add_argument("--holdout", type=float, default=None)
 ap.add_argument("--data", default="pairs.npz", help="file in data/: pairs.npz (BAHAMAS) or darkskies_pairs.npz")
 ap.add_argument("--max-steps", type=int, default=None)
@@ -40,7 +44,7 @@ ap.add_argument("--wandb-project", default="cdm_to_sidm_unet")
 ap.add_argument("--seed", type=int, default=0)
 a = ap.parse_args()
 torch.manual_seed(a.seed); np.random.seed(a.seed)
-DSCALE, C0, C1 = 0.1, 2, 98
+DSCALE, C0, C1 = a.dscale, 2, 98
 out = f"{HERE}/runs/{a.name}"
 os.makedirs(out, exist_ok=True)
 
@@ -48,17 +52,23 @@ D = np.load(f"{HERE}/data/{a.data}", allow_pickle=True)
 x, y, xi, sigma, shift, split, zz = (D[k] for k in ("x", "y", "xi", "sigma", "shift", "split", "redshift"))
 x, y = x[:, C0:C1, C0:C1], y[:, C0:C1, C0:C1]
 ok = (np.abs(shift).max(1) <= 2) & (sigma > 0)
+if "ok" in D.files: ok &= D["ok"]
+cx = D["cx"][..., C0:C1, C0:C1] if "cx" in D.files else None; cy = D["cy"][..., C0:C1, C0:C1] if "cy" in D.files else None
 if a.holdout is not None:
     ok &= sigma != a.holdout
 psplit = split[xi]
 train, val = np.where(ok & (psplit == "train"))[0], np.where(ok & (psplit == "val"))[0]
 mu, sd = float(x[split == "train"].mean()), float(x[split == "train"].std())
 norm = dict(mu=mu, sd=sd, dscale=DSCALE, crop=(C0, C1), data=a.data)
+cstat = lambda c: ([float(c[:, j].mean()) for j in range(c.shape[1])], [float(c[:, j].std()) for j in range(c.shape[1])])
+if cx is not None: norm["cx_mu"], norm["cx_sd"] = cstat(cx[split == "train"])
+if cy is not None: norm["cy_mu"], norm["cy_sd"] = cstat(cy[train])
+NCOND = 1 + (0 if cx is None else cx.shape[1]) + (0 if cy is None else cy.shape[1])
 cfg = dict(vars(a), **norm)
 json.dump(cfg, open(f"{out}/config.json", "w"), indent=1)
 print(f"model {a.model}; train pairs {len(train)}, val pairs {len(val)}; device {a.device}")
 
-model = Flow(levels=a.levels, K=a.K, hidden=a.hidden, cond_img=(a.model == "A")).to(a.device)
+model = Flow(levels=a.levels, K=a.K, hidden=a.hidden, cond_img=(a.model == "A"), ncond=NCOND).to(a.device)
 print(f"{sum(p.numel() for p in model.parameters())/1e6:.2f}M parameters")
 opt = torch.optim.Adam(model.parameters(), lr=a.lr)
 steps = len(train) // a.batch if a.max_steps is None else min(a.max_steps, len(train) // a.batch)
@@ -69,15 +79,23 @@ T = lambda v: torch.tensor(np.ascontiguousarray(v), dtype=torch.float32, device=
 
 def batch(idx, augment):
     lc, ls = x[xi[idx]], y[idx]
+    ex = []
+    if cx is not None: ex.append((cx[xi[idx]] - np.array(norm["cx_mu"])[:, None, None]) / np.array(norm["cx_sd"])[:, None, None])
+    if cy is not None: ex.append((cy[idx] - np.array(norm["cy_mu"])[:, None, None]) / np.array(norm["cy_sd"])[:, None, None])
+    ex = np.concatenate(ex, 1).astype(np.float32) if ex else None
     if augment:
         k, f = np.random.randint(4), np.random.rand() < 0.5
         lc, ls = (np.rot90(t, k, axes=(1, 2)) for t in (lc, ls))
+        if ex is not None: ex = np.rot90(ex, k, axes=(2, 3))
         if f:
             lc, ls = (t[:, :, ::-1] for t in (lc, ls))
+            if ex is not None: ex = ex[..., ::-1]
     n = lambda t: t + a.noise * np.random.randn(*t.shape).astype(np.float32)
     cv = cond_vec(sigma[idx], zz[xi[idx]]).to(a.device)
     if a.model == "A":
-        return dict(x=T(np.arcsinh(n(ls - lc) / DSCALE)), cimg=T((lc - mu) / sd), cv=cv)
+        ci = T((lc - mu) / sd)
+        if ex is not None: ci = torch.cat([ci, torch.tensor(np.ascontiguousarray(ex), dtype=torch.float32, device=a.device)], 1)
+        return dict(x=T(np.arcsinh(n(ls - lc) / DSCALE)), cimg=ci, cv=cv)
     cv0 = cond_vec(np.zeros(len(idx)), zz[xi[idx]]).to(a.device)
     return dict(xc=T((n(lc) - mu) / sd), xs=T((n(ls) - mu) / sd), cv0=cv0, cv=cv)
 
@@ -122,7 +140,7 @@ for ep in range(a.epochs):
     if vl[0] < best:
         best = vl[0]
         torch.save(dict(state=model.state_dict(), arch=dict(levels=a.levels, K=a.K, hidden=a.hidden,
-                        cond_img=(a.model == "A")), norm=norm, config=cfg, epoch=ep), f"{out}/model.pt")
+                        cond_img=(a.model == "A"), ncond=NCOND), norm=norm, config=cfg, epoch=ep), f"{out}/model.pt")
     with open(f"{out}/history.csv", "w", newline="") as fh:
         w = csv.DictWriter(fh, list(hist[0])); w.writeheader(); w.writerows(hist)
     if run is not None:

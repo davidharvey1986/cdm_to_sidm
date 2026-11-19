@@ -105,5 +105,12 @@ if __name__ == "__main__":
     a = ap.parse_args()
     rows = list(csv.DictReader(open(a.table)))[: a.only]
     print(f"{len(rows)} rows from {a.table}", flush=True)
-    for r in rows:
-        one(r, a.runs, a.outroot, a.axes)
+    failed = []
+    for r in rows:  # one bad row (missing file, read error) must not stop the rest of the chunk
+        try:
+            one(r, a.runs, a.outroot, a.axes)
+        except Exception as e:
+            import traceback; traceback.print_exc()
+            failed.append(f"{r['model']} {r['snap']} {r['halo']}: {type(e).__name__}: {e}"); print("FAILED", failed[-1], flush=True)
+    print(f"done: {len(rows) - len(failed)}/{len(rows)} rows ok", flush=True)
+    for f in failed: print("FAILED", f, flush=True)

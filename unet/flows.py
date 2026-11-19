@@ -135,10 +135,10 @@ class Encoder(nn.Module):
 
 
 class Flow(nn.Module):
-    def __init__(self, levels=3, K=8, hidden=96, cond_img=False, ce=32):
+    def __init__(self, levels=3, K=8, hidden=96, cond_img=False, ce=32, ncond=1):
         super().__init__()
         self.nlev, self.cond_img = levels, cond_img
-        self.enc = Encoder(1 + NCS, ce) if cond_img else None
+        self.enc = Encoder(ncond + NCS, ce) if cond_img else None  # ncond conditioning image channels
         cc = (ce if cond_img else 0) + NCS
         self.steps, self.priors, self.chans = nn.ModuleList(), nn.ModuleList(), []
         c = 1
