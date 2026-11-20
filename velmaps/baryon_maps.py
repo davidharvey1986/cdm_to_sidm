@@ -55,7 +55,8 @@ def one(row, runs, outroot, axes):
     A = (2 * HALF / NPIX) ** 2
     parts = {}
     for name, part in (("gas", s.gas), ("star", s.stars)):
-        pos, m = particles(part, a); d = pos - c; d -= box * np.round(d / box); parts[name] = (d, m)
+        pos, m = particles(part, a); d = pos - c; d -= box * np.round(d / box)
+        keep = (np.abs(d) < max(DEEP, r200, HALF)).all(1); parts[name] = (d[keep], m[keep]); del pos  # every selection lies in this cube
     print(f"{model} {snap} {halo}: {len(parts['gas'][1])} gas, {len(parts['star'][1])} star particles, read {time.time() - t0:.0f}s", flush=True)
     for ax in todo:
         i1, i2, k = AXES[ax]; out = {}
@@ -75,23 +76,31 @@ def one(row, runs, outroot, axes):
               f"{time.time() - t0:.0f}s", flush=True)
 
 
+def safe(args):
+    """one row; a bad row (missing file, read error) is logged and returned, never stops the rest"""
+    r = args[0]
+    try:
+        one(*args); return None
+    except Exception as e:
+        import traceback; traceback.print_exc()
+        f = f"{r['model']} {r['snap']} {r['halo']}: {type(e).__name__}: {e}"; print("FAILED", f, flush=True); return f
+
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--table", required=True, nargs="+"); ap.add_argument("--outroot", required=True)
     ap.add_argument("--runs", default=RUNS_DEFAULT); ap.add_argument("--axes", default="xyz")
     ap.add_argument("--models", default=None, help="comma-separated models to keep (default all)")
     ap.add_argument("--only", type=int, default=None, help="process only the first N rows (testing)")
+    ap.add_argument("--procs", type=int, default=int(os.environ.get("SLURM_CPUS_PER_TASK", 1)), help="rows processed in parallel")
     a = ap.parse_args()
     rows = [r for t in a.table for r in csv.DictReader(open(t))]
     if a.models: rows = [r for r in rows if r["model"] in a.models.split(",")]
     rows = rows[: a.only]
     print(f"{len(rows)} rows from {len(a.table)} tables", flush=True)
-    failed = []
-    for r in rows:  # one bad row must not stop the rest
-        try:
-            one(r, a.runs, a.outroot, a.axes)
-        except Exception as e:
-            import traceback; traceback.print_exc()
-            failed.append(f"{r['model']} {r['snap']} {r['halo']}: {type(e).__name__}: {e}"); print("FAILED", failed[-1], flush=True)
+    from multiprocessing import Pool
+    with Pool(max(a.procs, 1)) as P:
+        res = P.map(safe, [(r, a.runs, a.outroot, a.axes) for r in rows], chunksize=1)
+    failed = [f for f in res if f]
     print(f"done: {len(rows) - len(failed)}/{len(rows)} rows ok", flush=True)
     for f in failed: print("FAILED", f, flush=True)
