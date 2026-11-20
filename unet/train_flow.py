@@ -15,7 +15,9 @@ Maps are cropped to the central 96x96 px; only pairs whose re-centring shift is 
 Extra conditioning (model A): if the data file has cx (Nx, c1, 100, 100; per CDM map) and/or cy (P, c2, 100, 100; per pair),
 they are appended to the CDM map as conditioning channels (each standardised on the train split), e.g. data/pairs_stars.npz:
 x, y = CDM, SIDM stars; cx = CDM DM; cy = SIDM DM - CDM DM. A per-pair ok mask is used if present.
-usage: python3 train_flow.py --model A --name flowA [--epochs 40] [--holdout 0.3] [--data darkskies_pairs.npz] [--dscale 0.1]
+--offset f: hybrid target (prepare_gas_hybrid.py).
+--scale-aug a: per-pair stellar-scale augmentation (stars flow; validation is not augmented), see stars_scale_check.py.
+usage: python3 train_flow.py --model A --name flowA [--epochs 40] [--holdout 0.3] [--data darkskies_pairs.npz] [--dscale 0.1] [--scale-aug 0.5]
 """
 import os, json, time, argparse, csv
 import numpy as np
@@ -36,7 +38,12 @@ ap.add_argument("--lam", type=float, default=1.0, help="model B latent-alignment
 ap.add_argument("--noise", type=float, default=0.003, help="dequantisation noise, dex")
 ap.add_argument("--dscale", type=float, default=0.1, help="asinh scale of delta, dex")
 ap.add_argument("--holdout", type=float, default=None)
+ap.add_argument("--scale-aug", type=float, default=0.0, help="train-time scale augmentation: multiply each pair's CDM and SIDM linear maps by the same 10^U(-a, a)")
+ap.add_argument("--scale-floor", type=float, default=1e11, help="floor of the log maps, re-applied after the rescaling")
+ap.add_argument("--floor-mode", choices=("soft", "hard"), default="soft", help="soft: log10(Sigma + floor) (stars); hard: log10 max(Sigma, floor) (gas)")
+ap.add_argument("--scale-aug-cx", type=int, nargs="*", default=[], help="cx channels (soft floor 1e11, e.g. CDM stars) rescaled by their own independent factor")
 ap.add_argument("--data", default="pairs.npz", help="file in data/: pairs.npz (BAHAMAS) or darkskies_pairs.npz")
+ap.add_argument("--offset", default=None, help="file in data/ with off_ring (P, 48): a per-pair radial mean change subtracted from the SIDM map after augmentation (hybrid; prepare_gas_hybrid.py)")
 ap.add_argument("--max-steps", type=int, default=None)
 ap.add_argument("--device", default="mps" if torch.backends.mps.is_available() else "cpu")
 ap.add_argument("--no-wandb", action="store_true")
@@ -59,7 +66,9 @@ if a.holdout is not None:
 psplit = split[xi]
 train, val = np.where(ok & (psplit == "train"))[0], np.where(ok & (psplit == "val"))[0]
 mu, sd = float(x[split == "train"].mean()), float(x[split == "train"].std())
-norm = dict(mu=mu, sd=sd, dscale=DSCALE, crop=(C0, C1), data=a.data)
+norm = dict(mu=mu, sd=sd, dscale=DSCALE, crop=(C0, C1), data=a.data, offset=a.offset)
+OFF = np.load(f"{HERE}/data/{a.offset}")["off_ring"] if a.offset else None
+_yy, _xx = np.indices((C1 - C0, C1 - C0)); RBC = np.minimum(np.hypot(_yy - (C1 - C0 - 1) / 2, _xx - (C1 - C0 - 1) / 2).astype(int), 47)
 cstat = lambda c: ([float(c[:, j].mean()) for j in range(c.shape[1])], [float(c[:, j].std()) for j in range(c.shape[1])])
 if cx is not None: norm["cx_mu"], norm["cx_sd"] = cstat(cx[split == "train"])
 if cy is not None: norm["cy_mu"], norm["cy_sd"] = cstat(cy[train])
@@ -80,9 +89,23 @@ T = lambda v: torch.tensor(np.ascontiguousarray(v), dtype=torch.float32, device=
 def batch(idx, augment):
     lc, ls = x[xi[idx]], y[idx]
     ex = []
-    if cx is not None: ex.append((cx[xi[idx]] - np.array(norm["cx_mu"])[:, None, None]) / np.array(norm["cx_sd"])[:, None, None])
+    if cx is not None:
+        cxr = cx[xi[idx]]
+        if augment and a.scale_aug > 0 and a.scale_aug_cx:
+            cxr = cxr.copy()
+            for j in a.scale_aug_cx:
+                g = 10 ** np.random.uniform(-a.scale_aug, a.scale_aug, len(idx))[:, None, None]
+                cxr[:, j] = np.log10(g * np.maximum(10 ** cxr[:, j].astype(np.float64) - 1e11, 0) + 1e11)
+        ex.append((cxr - np.array(norm["cx_mu"])[:, None, None]) / np.array(norm["cx_sd"])[:, None, None])
     if cy is not None: ex.append((cy[idx] - np.array(norm["cy_mu"])[:, None, None]) / np.array(norm["cy_sd"])[:, None, None])
     ex = np.concatenate(ex, 1).astype(np.float32) if ex else None
+    if augment and a.scale_aug > 0:  # same random factor for a pair's CDM and SIDM map: removes the absolute scale as information
+        g = 10 ** np.random.uniform(-a.scale_aug, a.scale_aug, len(idx))[:, None, None]; F0 = a.scale_floor
+        if a.floor_mode == "soft":
+            lc, ls = (np.log10(g * np.maximum(10 ** t.astype(np.float64) - F0, 0) + F0).astype(np.float32) for t in (lc, ls))
+        else:  # floored pixels count as empty, so scaling up does not lift the floor
+            lc, ls = (np.log10(np.maximum(g * np.where(t > np.log10(F0) + 1e-4, 10 ** t.astype(np.float64), 0), F0)).astype(np.float32) for t in (lc, ls))
+    if OFF is not None: ls = (ls - OFF[idx][:, RBC]).astype(np.float32)  # hybrid: residual about the converter mean (radial, so before/after rotation is the same)
     if augment:
         k, f = np.random.randint(4), np.random.rand() < 0.5
         lc, ls = (np.rot90(t, k, axes=(1, 2)) for t in (lc, ls))

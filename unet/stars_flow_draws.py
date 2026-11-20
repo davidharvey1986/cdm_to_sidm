@@ -10,6 +10,7 @@ import dm_common as C
 from flows import Flow, cond_vec, mark_initialized
 ap = argparse.ArgumentParser(); ap.add_argument("--name", default="flowA_stars"); ap.add_argument("--dm", choices=["true", "hyb"], default="hyb")
 ap.add_argument("--ndraw", type=int, default=19); ap.add_argument("--T", type=float, default=1.0); ap.add_argument("--nmax", type=int, default=None)
+ap.add_argument("--tag", default="", help="output runs/stars_<dm><tag>/")
 a = ap.parse_args(); dev = "mps" if torch.backends.mps.is_available() else "cpu"; torch.manual_seed(7); t0 = time.time()
 S, _ = C.load(); te = S["test"]; D = np.load(f"{C.HERE}/data/pairs_stars.npz", allow_pickle=True)
 k = te["k"][:a.nmax]; assert D["ok"][k].all()
@@ -30,5 +31,5 @@ with torch.no_grad():
             u = F.decode(F.sample_eps(n, dev, T=a.T, H=C.N), cv, torch.tensor(ci, dtype=torch.float32, device=dev), H=C.N)[:, 0].cpu().numpy()
             out[d, sl] = xs[sl] + np.sinh(np.clip(u, -UC, UC)) * ds
         print(f"  {sl.stop}/{len(k)}, {time.time() - t0:.0f}s", flush=True)
-od = f"{C.HERE}/runs/stars_{a.dm}"; os.makedirs(od, exist_ok=True)
+od = f"{C.HERE}/runs/stars_{a.dm}{a.tag}"; os.makedirs(od, exist_ok=True)
 np.savez(f"{od}/draws.npz", draws=out, k=k, name=a.name, epoch=ck["epoch"], dm=a.dm); print("wrote", od + "/draws.npz")
